@@ -3,6 +3,90 @@ document.addEventListener("DOMContentLoaded", () => {
   const activitySelect = document.getElementById("activity");
   const signupForm = document.getElementById("signup-form");
   const messageDiv = document.getElementById("message");
+  const registerForm = document.getElementById("register-form");
+  const loginForm = document.getElementById("login-form");
+  const logoutButton = document.getElementById("logout-btn");
+  const authMessageDiv = document.getElementById("auth-message");
+
+  let accessToken = localStorage.getItem("access_token") || "";
+  let refreshToken = localStorage.getItem("refresh_token") || "";
+
+  function setAuthMessage(message, type) {
+    authMessageDiv.textContent = message;
+    authMessageDiv.className = type;
+    authMessageDiv.classList.remove("hidden");
+
+    setTimeout(() => {
+      authMessageDiv.classList.add("hidden");
+    }, 4000);
+  }
+
+  function setTokens(tokens) {
+    accessToken = tokens.access_token;
+    refreshToken = tokens.refresh_token;
+    localStorage.setItem("access_token", accessToken);
+    localStorage.setItem("refresh_token", refreshToken);
+  }
+
+  function clearTokens() {
+    accessToken = "";
+    refreshToken = "";
+    localStorage.removeItem("access_token");
+    localStorage.removeItem("refresh_token");
+  }
+
+  async function refreshAccessToken() {
+    if (!refreshToken) {
+      return false;
+    }
+
+    const response = await fetch("/auth/refresh", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+
+    if (!response.ok) {
+      clearTokens();
+      return false;
+    }
+
+    const tokens = await response.json();
+    setTokens(tokens);
+    return true;
+  }
+
+  async function authenticatedFetch(url, options = {}) {
+    const headers = {
+      ...(options.headers || {}),
+    };
+
+    if (accessToken) {
+      headers.Authorization = `Bearer ${accessToken}`;
+    }
+
+    let response = await fetch(url, {
+      ...options,
+      headers,
+    });
+
+    if (response.status === 401 && refreshToken) {
+      const refreshed = await refreshAccessToken();
+      if (refreshed) {
+        response = await fetch(url, {
+          ...options,
+          headers: {
+            ...headers,
+            Authorization: `Bearer ${accessToken}`,
+          },
+        });
+      }
+    }
+
+    return response;
+  }
 
   // Function to fetch activities from API
   async function fetchActivities() {
@@ -12,6 +96,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // Clear loading message
       activitiesList.innerHTML = "";
+      activitySelect.innerHTML = '<option value="">-- Select an activity --</option>';
 
       // Populate activities list
       Object.entries(activities).forEach(([name, details]) => {
@@ -74,10 +159,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const email = button.getAttribute("data-email");
 
     try {
-      const response = await fetch(
-        `/activities/${encodeURIComponent(
-          activity
-        )}/unregister?email=${encodeURIComponent(email)}`,
+      const response = await authenticatedFetch(
+        `/activities/${encodeURIComponent(activity)}/unregister?email=${encodeURIComponent(email)}`,
         {
           method: "DELETE",
         }
@@ -118,10 +201,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const activity = document.getElementById("activity").value;
 
     try {
-      const response = await fetch(
-        `/activities/${encodeURIComponent(
-          activity
-        )}/signup?email=${encodeURIComponent(email)}`,
+      const response = await authenticatedFetch(
+        `/activities/${encodeURIComponent(activity)}/signup?email=${encodeURIComponent(email)}`,
         {
           method: "POST",
         }
@@ -152,6 +233,82 @@ document.addEventListener("DOMContentLoaded", () => {
       messageDiv.className = "error";
       messageDiv.classList.remove("hidden");
       console.error("Error signing up:", error);
+    }
+  });
+
+  registerForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    const email = document.getElementById("register-email").value;
+    const password = document.getElementById("register-password").value;
+
+    try {
+      const response = await fetch("/auth/register", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const result = await response.json();
+      if (response.ok) {
+        registerForm.reset();
+        setAuthMessage(result.message, "success");
+      } else {
+        setAuthMessage(result.detail || "Registration failed", "error");
+      }
+    } catch (error) {
+      setAuthMessage("Registration failed", "error");
+      console.error("Error registering:", error);
+    }
+  });
+
+  loginForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    const email = document.getElementById("login-email").value;
+    const password = document.getElementById("login-password").value;
+
+    try {
+      const response = await fetch("/auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const result = await response.json();
+      if (response.ok) {
+        setTokens(result);
+        loginForm.reset();
+        setAuthMessage("Login successful", "success");
+      } else {
+        setAuthMessage(result.detail || "Login failed", "error");
+      }
+    } catch (error) {
+      setAuthMessage("Login failed", "error");
+      console.error("Error logging in:", error);
+    }
+  });
+
+  logoutButton.addEventListener("click", async () => {
+    try {
+      if (refreshToken) {
+        await fetch("/auth/logout", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ refresh_token: refreshToken }),
+        });
+      }
+    } catch (error) {
+      console.error("Error logging out:", error);
+    } finally {
+      clearTokens();
+      setAuthMessage("Logged out", "info");
     }
   });
 
